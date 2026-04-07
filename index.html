@@ -547,17 +547,42 @@ body {
 /* ── TEXT OVERLAY DISPLAY ── */
 .preview-text-layer {
   position: absolute;
-  left: 50%; transform: translateX(-50%);
   max-width: 86%;
   text-align: center;
   color: #fff;
   font-weight: 700;
   line-height: 1.15;
-  pointer-events: none;
+  pointer-events: auto;
   z-index: 4;
   white-space: pre-wrap;
   word-break: break-word;
   text-shadow: 0 2px 12px rgba(0,0,0,0.7), 0 0 30px rgba(0,0,0,0.5);
+  cursor: grab;
+  user-select: none;
+  transform: translate(-50%, -50%);
+  touch-action: none;
+}
+.preview-text-layer:hover {
+  outline: 1.5px dashed rgba(108,99,255,0.7);
+  outline-offset: 6px;
+  border-radius: 3px;
+}
+.preview-text-layer.dragging {
+  cursor: grabbing;
+  outline: 2px solid var(--a1);
+  outline-offset: 6px;
+  border-radius: 3px;
+}
+.preview-text-layer.selected-text {
+  outline: 2px solid var(--a1);
+  outline-offset: 6px;
+  border-radius: 3px;
+}
+/* Live preview layer shouldn't be draggable */
+.preview-text-layer[data-live="true"] {
+  pointer-events: none;
+  cursor: default;
+  outline: none;
 }
 
 /* ── COLOR SWATCHES ── */
@@ -1795,13 +1820,13 @@ function livePreviewText() {
     color: state.textColor, style: state.textStyle, anim: 'none'
   });
   liveEl.textContent = content;
+  liveEl.style.pointerEvents = 'none';
 }
 
 function applyTextStyles(el, layer) {
   el.textContent = layer.content;
-  el.style.top = layer.posY + '%';
-  el.style.left = layer.posX + '%';
-  el.style.transform = 'translate(-50%, -50%)';
+  el.style.top = (layer.posY ?? 80) + '%';
+  el.style.left = (layer.posX ?? 50) + '%';
   el.style.fontSize = layer.fontSize + 'px';
   el.style.color = layer.color || '#fff';
   
@@ -1865,17 +1890,93 @@ function renderTextLayers() {
   const liveEl = previewTextLayers.querySelector('[data-live="true"]');
   previewTextLayers.innerHTML = '';
   if (liveEl) previewTextLayers.appendChild(liveEl);
-  
+
   state.textLayers.forEach(layer => {
     const el = document.createElement('div');
     el.className = 'preview-text-layer';
     if (layer.anim && layer.anim !== 'none') {
       el.classList.add('text-anim-' + layer.anim);
     }
+    if (state.selectedTextId === layer.id) el.classList.add('selected-text');
     el.dataset.layerId = layer.id;
     applyTextStyles(el, layer);
+    makeDraggableTextLayer(el, layer);
     previewTextLayers.appendChild(el);
   });
+}
+
+// ── DRAG TO REPOSITION TEXT ──
+function makeDraggableTextLayer(el, layer) {
+  let dragging = false;
+  let startX, startY, startPosX, startPosY;
+
+  const onDown = (e) => {
+    // Select this layer
+    state.selectedTextId = layer.id;
+    selectTextLayer(layer.id);
+    // Re-apply selected class visually
+    document.querySelectorAll('.preview-text-layer').forEach(t => t.classList.remove('selected-text'));
+    el.classList.add('selected-text');
+
+    dragging = true;
+    el.classList.add('dragging');
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    startX = clientX;
+    startY = clientY;
+    startPosX = layer.posX ?? 50;
+    startPosY = layer.posY ?? 80;
+
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const onMove = (e) => {
+    if (!dragging) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    const wrap = $('previewWrap');
+    const rect = wrap.getBoundingClientRect();
+
+    const dx = clientX - startX;
+    const dy = clientY - startY;
+
+    // Convert pixel delta to percentage of preview size
+    const newX = Math.min(95, Math.max(5, startPosX + (dx / rect.width) * 100));
+    const newY = Math.min(95, Math.max(5, startPosY + (dy / rect.height) * 100));
+
+    layer.posX = Math.round(newX);
+    layer.posY = Math.round(newY);
+
+    el.style.left = layer.posX + '%';
+    el.style.top = layer.posY + '%';
+
+    // Sync sliders
+    const slX = $('slTextPosX');
+    const slY = $('slTextPos');
+    if (slX) { slX.value = layer.posX; $('textPosXVal').textContent = layer.posX + '%'; }
+    if (slY) { slY.value = layer.posY; $('textPosVal').textContent = layer.posY + '%'; }
+
+    e.preventDefault();
+  };
+
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    el.classList.remove('dragging');
+  };
+
+  // Mouse
+  el.addEventListener('mousedown', onDown);
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+
+  // Touch
+  el.addEventListener('touchstart', onDown, { passive: false });
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('touchend', onUp);
 }
 
 function updateTextVisibility() {
